@@ -261,7 +261,13 @@ def main():
     kwargs.update({'charset_test': charset_test})
     print(f'Additional keyword arguments: {kwargs}')
 
-    model = load_from_checkpoint(args.checkpoint, **kwargs).eval().to(args.device)
+    # model = load_from_checkpoint(args.checkpoint, **kwargs).eval().to(args.device)
+    # pthloc = os.path.join(*args.checkpoint.split("/")[:3], "parseq_epoch=25_last.pth")
+    # torch.save(model.state_dict(), pthloc)
+    # print(f"Saved model to {pthloc}")
+
+    model = load_from_checkpoint("pretrained=parseq", **kwargs).eval().to(args.device)
+    model.load_state_dict(torch.load(args.checkpoint))
     hp = model.hparams
 
     if args.inference:

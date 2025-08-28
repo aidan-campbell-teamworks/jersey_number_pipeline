@@ -181,6 +181,13 @@ def train_model_with_sam(model, criterion, optimizer, num_epochs=25, ):
     best_loss = 0.0
     best_acc = 0.0
 
+    # Early stopping state
+    early_stop_patience, early_stop_min_delta, early_stop_metric = 8, 0.0, 'val_acc'
+    epochs_since_improve = 0
+    stop_training = False
+    monitor_is_higher_better = (early_stop_metric == 'val_acc')
+    best_monitored_value = float('-inf') if monitor_is_higher_better else float('inf')
+
     for epoch in (pbar := tqdm(range(num_epochs))):
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
@@ -233,6 +240,21 @@ def train_model_with_sam(model, criterion, optimizer, num_epochs=25, ):
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
                 pbar.set_description(f"Best Epoch (#{best_epoch}) Loss: {best_loss:.4f} Acc: {best_acc:.4f}")
+
+        #     # early stopping check after validation
+        #     if phase == 'val' and early_stop_patience is not None and early_stop_patience > 0:
+        #         current_value = float(epoch_acc) if monitor_is_higher_better else float(epoch_loss)
+        #         improved = (current_value > best_monitored_value + early_stop_min_delta) if monitor_is_higher_better \
+        #             else (current_value < best_monitored_value - early_stop_min_delta)
+        #         if improved:
+        #             best_monitored_value = current_value
+        #             epochs_since_improve = 0
+        #         else:
+        #             epochs_since_improve += 1
+        #             if epochs_since_improve >= early_stop_patience:
+        #                 stop_training = True
+        # if stop_training:
+        #     break
 
     time_elapsed = time.time() - since
     print(f'Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')

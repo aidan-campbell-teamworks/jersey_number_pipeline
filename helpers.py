@@ -570,7 +570,7 @@ def process_jersey_id_predictions(file_path, useBias=False):
             best_frames[tracklet].append((int(tmp[2][:-4]), total_prob))
 
     final_full_results = {}
-    for tracklet in all_results.keys():
+    for tracklet in sorted(all_results, key=lambda x: int(x)):
         if len(all_results[tracklet]) == 0:
             continue
         results = np.array(all_results[tracklet])
@@ -591,7 +591,7 @@ def process_jersey_id_predictions(file_path, useBias=False):
 
 THRESHOLD_FOR_TACK_LEGIBILITY = 0
 def is_track_legible(track, illegible_list, legible_tracklets):
-    if f"player_{track}" in illegible_list:
+    if track in illegible_list:
         return False
     try:
         if len(legible_tracklets[f"player_{track}"]) <= THRESHOLD_FOR_TACK_LEGIBILITY:
@@ -662,7 +662,7 @@ def evaluate_results(consolidated_dict, gt_dict, full_results = None):
     total = 0
     mistakes = []
     count_of_correct_in_full_results = 0
-    for id in gt_dict.keys():
+    for id in sorted(gt_dict, key=lambda x: int(x)):
         try:
             predicted = consolidated_dict[id]
         except KeyError:

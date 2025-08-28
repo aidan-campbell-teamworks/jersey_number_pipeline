@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import boto3
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -112,7 +113,7 @@ def get_football_legibility_results(use_filtered = False, filter = "sim"):
         track_results = lc.run(images_full_path, config.dataset["Football"]["legibility_model"], arch=config.dataset["Football"]["legibility_model_arch"], threshold=0.5)
         legible = list(np.nonzero(track_results))[0]
         if len(legible) == 0:
-            illegible_tracklets.append(directory)
+            illegible_tracklets.append(directory.split("_")[-1])
         else:
             legible_images = [images_full_path[i] for i in legible]
             legible_tracklets[directory] = legible_images
@@ -246,7 +247,8 @@ def consolidated_results(image_dir, dict, illegible_path=None, soccer_ball_list=
                 dict[str(entry)] = -1
 
     all_tracks = os.listdir(image_dir)
-    for t in all_tracks:
+    for track in all_tracks:
+        t = track.split("_")[-1]
         if not t in dict.keys():
             dict[t] = -1
         else:
@@ -303,7 +305,7 @@ def train_parseq(args):
                     "+experiment=parseq",
                     "dataset=real",
                     f"data.root_dir={data_root}",
-                    "trainer.max_epochs=25",
+                    "trainer.max_epochs=150",
                     "pretrained=parseq",
                     "trainer.devices=1",
                     "trainer.val_check_interval=1",
@@ -352,11 +354,21 @@ def football_pipeline(pipeline):
     best_frames_dir = os.path.join(config.dataset["Football"]["working_dir"], 
                              config.dataset["Football"]["best_frames"])
     
+    os.makedirs("models/s3", exist_ok=True)
+    config.dataset["Football"]["legibility_model"] = "models/s3/legibility_resnet34_football_20250821_unbalanced.pth"
+    config.dataset["Football"]["str_model"] = "models/s3/parseq_epoch=25_last.pth"
+    
+    s3 = boto3.client("s3")
+    s3.download_file("cv-training", "models/jersey_number/legibility_classifier/legibility_resnet34_football_20250821_unbalanced.pth", config.dataset["Football"]["legibility_model"])
+    s3.download_file("cv-training", "models/jersey_number/number_detector/parseq_epoch=25_last.pth", config.dataset["Football"]["str_model"])
+
+    print("Using models:")
+    print(f"Legibility model: {config.dataset['Football']['legibility_model']}")
+    print(f"STR model: {config.dataset['Football']['str_model']}")
+    
     # 1. generate and store features for each image in each tracklet
     if pipeline["feat"]:
         print("Generate features")
-        # command = f"conda run -n {config.reid_env} python3 {config.reid_script} --tracklets_folder {image_dir} --output_folder {features_dir}"
-        # success = os.system(command) == 0
         try:
             if os.path.exists(features_dir):
                 shutil.rmtree(features_dir)
@@ -375,8 +387,6 @@ def football_pipeline(pipeline):
     #2. identify and remove outliers based on features
     if pipeline["filter"] and success:
         print("Identify and remove outliers")
-        # command = f"python3 gaussian_outliers.py --tracklets_folder {image_dir} --output_folder {features_dir}"
-        # success = os.system(command) == 0
         try:
             from jersey_number_pipeline import gaussian_outliers as _gaussian_outliers
             _gaussian_outliers.get_main_subject(image_dir, features_dir)
@@ -397,7 +407,7 @@ def football_pipeline(pipeline):
         print("Done classifying legibility")
 
     #3.5 evaluate tracklet legibility results
-    if pipeline["legible_eval"] and success:
+    if pipeline["legible_eval"] and success and os.path.exists(gt_path):
         print("Evaluate Legibility results:")
         try:
             if legible_dict is None:
@@ -426,18 +436,11 @@ def football_pipeline(pipeline):
             success = False
         print("Done generating json for pose")
 
-        # 4.5 Alternatively generate json for pose for all images in test/train
-        #generate_json_for_football_pose_estimator()
-
         #4.5 run pose estimation and store results
         if success:
             print("Detecting pose")
-            # command = f"conda run -n {config.pose_env} python3 pose.py {config.pose_home}/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_huge_coco_256x192.py \
-            #     {config.pose_home}/checkpoints/vitpose-h.pth --img-root / --json-file {input_json} \
-            #     --out-json {output_json} --out-img-root {os.path.join(config.dataset["Football"]["working_dir"], "pose_results")}"
-            # success = os.system(command) == 0
             try:
-                out_img_root = os.path.join(config.dataset["Football"]["working_dir"], "pose_results")
+                out_img_root = os.path.join(working_dir, "pose_results")
                 success = run_in_conda(
                     config.pose_env,
                     "pose.py",
@@ -456,12 +459,6 @@ def football_pipeline(pipeline):
                 print(f"Failed to detect pose: {error}")
                 success = False
 
-
-    # all_legible = []
-    # for directory in os.listdir(image_dir):
-    #     track_dir = os.path.join(image_dir, directory)
-    #     all_legible.extend(os.listdir(track_dir))
-
     #5. generate cropped images
     if pipeline["crops"] and success:
         print("Generate crops")
@@ -479,9 +476,6 @@ def football_pipeline(pipeline):
     #6. run STR system on all crops
     if pipeline["str"] and success:
         print(f"Predict numbers with model: {config.dataset["Football"]["str_model"]}")
-        # command = f"conda run -n {config.str_env} python3 str.py  {config.dataset["Football"]["str_model"]}\
-        #     --data_root={crops_dir} --batch_size=1 --inference --result_file {str_result_file}"
-        # success = os.system(command) == 0
         try:
             success = run_in_conda(
                 config.str_env,
@@ -503,25 +497,25 @@ def football_pipeline(pipeline):
     #7. combine tracklet results
     if pipeline["combine"] and success:
         analysis_results = None
-        #read predicted results, stack unique predictions, sum confidence scores for each, choose argmax
+        # read predicted results, stack unique predictions, sum confidence scores for each, choose argmax
         results_dict, analysis_results, best_frames = helpers.process_jersey_id_predictions(str_result_file, useBias=True)
-        #results_dict, analysis_results = helpers.process_jersey_id_predictions_raw(str_result_file, useTS=True)
-        #results_dict, analysis_results = helpers.process_jersey_id_predictions_bayesian(str_result_file, useTS=True, useBias=True, useTh=True)
 
         # add illegible tracklet predictions
         consolidated_dict = consolidated_results(image_dir, results_dict, illegible_path) if pipeline["legibled"] else consolidated_results(image_dir, results_dict)
 
         #save results as json
         with open(final_results_path, "w") as f:
-            json.dump(sorted(consolidated_dict), f)
+            json.dump(consolidated_dict, f)
 
     #8. evaluate accuracy
     if pipeline["eval"] and success:
         if consolidated_dict is None:
             with open(final_results_path, "r") as f:
                 consolidated_dict = json.load(f)
-        with open(gt_path, "r") as gf:
-            gt_dict = json.load(gf)
+        gt_dict = None
+        if os.path.exists(gt_path):
+            with open(gt_path, "r") as gf:
+                gt_dict = json.load(gf)
         print(len(consolidated_dict.keys()), len(gt_dict.keys()))
         helpers.evaluate_results(consolidated_dict, gt_dict, full_results = analysis_results)
 

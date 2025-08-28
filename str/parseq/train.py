@@ -17,10 +17,11 @@ import math
 from pathlib import Path
 
 import hydra
+import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, open_dict
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, StochasticWeightAveraging
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, StochasticWeightAveraging
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.utilities.model_summary import summarize
@@ -71,13 +72,19 @@ def main(config: DictConfig):
     if config.model.get('perm_mirrored', False):
         assert config.model.perm_num % 2 == 0, 'perm_num should be even if perm_mirrored = True'
 
-    model = load_from_checkpoint("models/parseq_epoch=3-step=95-val_accuracy=98.7903-val_NED=99.3952.ckpt")
+    # model = load_from_checkpoint("outputs/parseq/2025-08-21_10-37-14/checkpoints/last.ckpt")
+    model = load_from_checkpoint("pretrained=parseq")
+    model.load_state_dict(torch.load("outputs/parseq/2025-08-21_10-37-14/parseq_epoch=25_last.pth"))
     print(summarize(model, max_depth=1 if model.hparams.name.startswith('parseq') else 2))
 
     datamodule: SceneTextDataModule = hydra.utils.instantiate(config.data)
 
     checkpoint = ModelCheckpoint(monitor='val_accuracy', mode='max', save_top_k=3, save_last=True,
                                  filename='{epoch}-{step}-{val_accuracy:.4f}-{val_NED:.4f}')
+    early_stopping = EarlyStopping(monitor='val_accuracy', mode='max',
+                                   patience=config.get('early_stop_patience', 10),
+                                   min_delta=config.get('early_stop_min_delta', 1e-3),
+                                   verbose=False)
     swa_epoch_start = 0.75
     swa_lr = config.model.lr * get_swa_lr_factor(config.model.warmup_pct, swa_epoch_start)
     swa = StochasticWeightAveraging(swa_lr, swa_epoch_start)
@@ -85,8 +92,10 @@ def main(config: DictConfig):
         str(Path(config.ckpt_path).parents[1].absolute())
     trainer: Trainer = hydra.utils.instantiate(config.trainer, logger=TensorBoardLogger(cwd, '', '.'),
                                                strategy=trainer_strategy, enable_model_summary=False,
-                                               callbacks=[checkpoint, swa])
+                                               callbacks=[checkpoint, swa, early_stopping])
     trainer.fit(model, datamodule=datamodule, ckpt_path=config.ckpt_path)
+    print("Finished training, saving model to ", f"{cwd}/parseq_epoch={config.trainer.max_epochs}_last.pth")
+    torch.save(model.state_dict(), f"{cwd}/parseq_epoch={config.trainer.max_epochs}_last.pth")
 
 
 if __name__ == '__main__':
