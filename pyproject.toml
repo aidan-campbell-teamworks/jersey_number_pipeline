@@ -1,6 +1,24 @@
 [project]
 name = "jersey-number-pipeline"
 version = "0.1.0"
-description = "Add your description here"
 readme = "README.md"
 dependencies = []
+
+[tool.setuptools.packages.find]
+include = [
+    "jersey_net",
+    "jersey_net.*",
+]
+
+[tool.setuptools.package-data]
+"jersey_net.str.parseq" = ["*"]
+"jersey_net.str.parseq.requirements" = ["*"]
+"jersey_net.str.parseq.configs" = ["*"]
+"jersey_net.str.parseq.configs.charset" = ["*"]
+"jersey_net.str.parseq.configs.dataset" = ["*"]
+"jersey_net.str.parseq.configs.experiment" = ["*"]
+"jersey_net.str.parseq.configs.model" = ["*"]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -424,7 +424,7 @@ def test_model(model, subset, result_path=None):
 
 
 # run inference on a list of files
-def run(image_paths, model_path, threshold=0.5, arch='resnet18'):
+def run(image_paths, model_path, threshold=0.5, arch='resnet18', progress_bar=False):
     # setup data
     dataset = UnlabelledJerseyNumberLegibilityDataset(image_paths, arch=arch)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=4,
@@ -449,7 +449,8 @@ def run(image_paths, model_path, threshold=0.5, arch='resnet18'):
 
     # run classifier
     results = []
-    for inputs in dataloader:
+    iterator = tqdm(dataloader) if progress_bar else dataloader
+    for inputs in iterator:
         # print(f"input and label sizes:{len(inputs), len(labels)}")
         inputs = inputs.to(device)
 
